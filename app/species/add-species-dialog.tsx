@@ -23,13 +23,8 @@ import { useState, type BaseSyntheticEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-// We use zod (z) to define a schema for the "Add species" form.
-// zod handles validation of the input values with methods like .string(), .nullable(). It also processes the form inputs with .transform() before the inputs are sent to the database.
-
-// Define kingdom enum for use in Zod schema and displaying dropdown options in the form
 const kingdoms = z.enum(["Animalia", "Plantae", "Fungi", "Protista", "Archaea", "Bacteria"]);
 
-// Use Zod to define the shape + requirements of a Species entry; used in form validation
 const speciesSchema = z.object({
   scientific_name: z
     .string()
@@ -39,7 +34,6 @@ const speciesSchema = z.object({
   common_name: z
     .string()
     .nullable()
-    // Transform empty string or only whitespace input to null before form submission, and trim whitespace otherwise
     .transform((val) => (!val || val.trim() === "" ? null : val.trim())),
   kingdom: kingdoms,
   total_population: z.number().int().positive().min(1).nullable(),
@@ -47,24 +41,15 @@ const speciesSchema = z.object({
     .string()
     .url()
     .nullable()
-    // Transform empty string or only whitespace input to null before form submission, and trim whitespace otherwise
     .transform((val) => (!val || val.trim() === "" ? null : val.trim())),
   description: z
     .string()
     .nullable()
-    // Transform empty string or only whitespace input to null before form submission, and trim whitespace otherwise
     .transform((val) => (!val || val.trim() === "" ? null : val.trim())),
 });
 
 type FormData = z.infer<typeof speciesSchema>;
 
-// Default values for the form fields.
-/* Because the react-hook-form (RHF) used here is a controlled form (not an uncontrolled form),
-fields that are nullable/not required should explicitly be set to `null` by default.
-Otherwise, they will be `undefined` by default, which will raise warnings because `undefined` conflicts with controlled components.
-All form fields should be set to non-undefined default values.
-Read more here: https://legacy.react-hook-form.com/api/useform/
-*/
 const defaultValues: Partial<FormData> = {
   scientific_name: "",
   common_name: null,
@@ -74,21 +59,90 @@ const defaultValues: Partial<FormData> = {
   description: null,
 };
 
+// Guess kingdom 
+function guessKingdom(text) {
+  const lower = text.toLowerCase();
+  if (lower.includes("animal") || lower.includes("mammal") || lower.includes("bird") || lower.includes("reptile") || lower.includes("fish") || lower.includes("insect") || lower.includes("amphibian")) 
+    return "Animalia";
+  if (lower.includes("plant") || lower.includes("flowering") || lower.includes("tree") || lower.includes("shrub")) 
+    return "Plantae";
+  if (lower.includes("fungus") || lower.includes("fungi") || lower.includes("mushroom")) 
+    return "Fungi";
+  if (lower.includes("protist") || lower.includes("algae") || lower.includes("protozoa")) 
+    return "Protista";
+  if (lower.includes("archaea")) 
+    return "Archaea";
+  if (lower.includes("bacterium") || lower.includes("bacteria")) 
+    return "Bacteria";
+  return "???";
+}
+
 export default function AddSpeciesDialog({ userId }: { userId: string }) {
   const router = useRouter();
-
-  // Control open/closed state of the dialog
   const [open, setOpen] = useState<boolean>(false);
+  const [wikiQuery, setWikiQuery] = useState("");
 
-  // Instantiate form functionality with React Hook Form, passing in the Zod schema (for validation) and default values
   const form = useForm<FormData>({
     resolver: zodResolver(speciesSchema),
     defaultValues,
     mode: "onChange",
   });
 
+  const fetchFromWikipedia = async () => {
+    if (wikiQuery == "") return; // ignore empty strings
+
+    const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(wikiQuery)}&srlimit=1&format=json&origin=*`;
+    const searchRes = await fetch(searchUrl);
+    const searchData = await searchRes.json();
+
+    const topResult = searchData?.query?.search?.[0]; // does the result exist
+
+    if (!topResult) {
+      toast({ title: "No results found", description: "Try again!", variant: "destructive" });
+      return;
+    }
+
+    const title = topResult.title;
+
+    // fetch stuff on the page
+    const detailUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=extracts|pageimages&exintro&explaintext&piprop=original&format=json&origin=*`;
+    const detailRes = await fetch(detailUrl);
+    const detailData = await detailRes.json();
+
+    const pages = detailData?.query?.pages;
+    const page = pages ? Object.values(pages)[0] as Record<string, any> : null;
+
+    if (!page) {
+      toast({ title: "Could not fetch details", variant: "destructive" });
+      return;
+    }
+
+    const extract: string = page.extract ?? "";
+    const imageUrl: string | null = page.original?.source ?? null;
+
+    const firstSentence = extract.split(".")[0] ?? "";
+    // regex to find if it is the name (usually in the format "(t4sg t4sg)")
+    const scientificMatch = firstSentence.match(/\(([A-Z][a-z]+ [a-z]+)\)/);
+    const scientificName = scientificMatch ? scientificMatch[1] : title;
+
+    const kingdom = guessKingdom(extract);
+
+    if (kingdom === "???") {
+      toast({ title: "Doesn't seem to be a species?", description: "Wikipedia doesn't think what you inputted is a species.", variant: "destructive" });
+      return;
+    }
+
+    // fill form
+    form.setValue("scientific_name", scientificName, { shouldValidate: true });
+    form.setValue("common_name", title, { shouldValidate: true });
+    form.setValue("kingdom", kingdom, { shouldValidate: true });
+    form.setValue("description", extract || null, { shouldValidate: true });
+    form.setValue("image", imageUrl, { shouldValidate: true });
+
+    toast({ title: "Found it!", description: `Loaded data from wikipedia.` });
+  };
+
   const onSubmit = async (input: FormData) => {
-    // The `input` prop contains data that has already been processed by zod. We can now use it in a supabase query
     const supabase = createBrowserSupabaseClient();
     const { error } = await supabase.from("species").insert([
       {
@@ -102,7 +156,6 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
       },
     ]);
 
-    // Catch and report errors from Supabase and exit the onSubmit function with an early 'return' if an error occurred.
     if (error) {
       return toast({
         title: "Something went wrong.",
@@ -111,16 +164,9 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
       });
     }
 
-    // Because Supabase errors were caught above, the remainder of the function will only execute upon a successful edit
-
-    // Reset form values to the default (empty) values.
-    // Practically, this line can be removed because router.refresh() also resets the form. However, we left it as a reminder that you should generally consider form "cleanup" after an add/edit operation.
     form.reset(defaultValues);
-
+    setWikiQuery("");
     setOpen(false);
-
-    // Refresh all server components in the current route. This helps display the newly created species because species are fetched in a server component, species/page.tsx.
-    // Refreshing that server component will display the new species from Supabase
     router.refresh();
 
     return toast({
@@ -141,9 +187,27 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
         <DialogHeader>
           <DialogTitle>Add Species</DialogTitle>
           <DialogDescription>
-            Add a new species here. Click &quot;Add Species&quot; below when you&apos;re done.
+            Enter details! (or use wikipedia if lazy)
           </DialogDescription>
         </DialogHeader>
+
+        <div className="flex items-end gap-2 rounded-s border p-3 mb-2">
+          <div className="flex-1">
+            <label className="text-sm font-medium mb-1 block">Grab from Wikipedia</label>
+            <Input
+              placeholder="Animal name..."
+              value={wikiQuery}
+              onChange={(e) => setWikiQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void fetchFromWikipedia();
+                }
+              }}
+            />
+          </div>
+        </div>
+
         <Form {...form}>
           <form onSubmit={(e: BaseSyntheticEvent) => void form.handleSubmit(onSubmit)(e)}>
             <div className="grid w-full items-center gap-4">
@@ -164,7 +228,6 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
                 control={form.control}
                 name="common_name"
                 render={({ field }) => {
-                  // We must extract value from field and convert a potential defaultValue of `null` to "" because inputs can't handle null values: https://github.com/orgs/react-hook-form/discussions/4091
                   const { value, ...rest } = field;
                   return (
                     <FormItem>
@@ -212,7 +275,6 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
                     <FormItem>
                       <FormLabel>Total population</FormLabel>
                       <FormControl>
-                        {/* Using shadcn/ui form with number: https://github.com/shadcn-ui/ui/issues/421 */}
                         <Input
                           type="number"
                           value={value ?? ""}
@@ -230,7 +292,6 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
                 control={form.control}
                 name="image"
                 render={({ field }) => {
-                  // We must extract value from field and convert a potential defaultValue of `null` to "" because inputs can't handle null values: https://github.com/orgs/react-hook-form/discussions/4091
                   const { value, ...rest } = field;
                   return (
                     <FormItem>
@@ -238,7 +299,7 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
                       <FormControl>
                         <Input
                           value={value ?? ""}
-                          placeholder="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/George_the_amazing_guinea_pig.jpg/440px-George_the_amazing_guinea_pig.jpg"
+                          placeholder="https://upload.wikimedia.org/wikipedia/commons/..."
                           {...rest}
                         />
                       </FormControl>
@@ -251,7 +312,6 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
                 control={form.control}
                 name="description"
                 render={({ field }) => {
-                  // We must extract value from field and convert a potential defaultValue of `null` to "" because textareas can't handle null values: https://github.com/orgs/react-hook-form/discussions/4091
                   const { value, ...rest } = field;
                   return (
                     <FormItem>
@@ -259,7 +319,7 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
                       <FormControl>
                         <Textarea
                           value={value ?? ""}
-                          placeholder="The guinea pig or domestic guinea pig, also known as the cavy or domestic cavy, is a species of rodent belonging to the genus Cavia in the family Caviidae."
+                          placeholder="The guinea pig or domestic guinea pig..."
                           {...rest}
                         />
                       </FormControl>
