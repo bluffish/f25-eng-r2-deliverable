@@ -1,6 +1,5 @@
 "use client";
 
-// stuff taken directly from add-species-dialog.tsx
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,13 +22,8 @@ import { useState, type BaseSyntheticEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-// We use zod (z) to define a schema for the "Add species" form.
-// zod handles validation of the input values with methods like .string(), .nullable(). It also processes the form inputs with .transform() before the inputs are sent to the database.
-
-// Define kingdom enum for use in Zod schema and displaying dropdown options in the form
 const kingdoms = z.enum(["Animalia", "Plantae", "Fungi", "Protista", "Archaea", "Bacteria"]);
 
-// Use Zod to define the shape + requirements of a Species entry; used in form validation
 const speciesSchema = z.object({
   scientific_name: z
     .string()
@@ -39,7 +33,6 @@ const speciesSchema = z.object({
   common_name: z
     .string()
     .nullable()
-    // Transform empty string or only whitespace input to null before form submission, and trim whitespace otherwise
     .transform((val) => (!val || val.trim() === "" ? null : val.trim())),
   kingdom: kingdoms,
   total_population: z.number().int().positive().min(1).nullable(),
@@ -47,24 +40,31 @@ const speciesSchema = z.object({
     .string()
     .url()
     .nullable()
-    // Transform empty string or only whitespace input to null before form submission, and trim whitespace otherwise
     .transform((val) => (!val || val.trim() === "" ? null : val.trim())),
   description: z
     .string()
     .nullable()
-    // Transform empty string or only whitespace input to null before form submission, and trim whitespace otherwise
     .transform((val) => (!val || val.trim() === "" ? null : val.trim())),
 });
 
 type FormData = z.infer<typeof speciesSchema>;
 
-// get values from database as default
-function getDefaultValues(species): Partial<FormData> {
-  const kingdom = species.kingdom
+interface SpeciesRecord {
+  id: number;
+  author: string;
+  scientific_name: string;
+  common_name: string | null;
+  kingdom: z.infer<typeof kingdoms>;
+  total_population: number | null;
+  image: string | null;
+  description: string | null;
+}
+
+function getDefaultValues(species: SpeciesRecord): Partial<FormData> {
   return {
     scientific_name: species.scientific_name ?? "",
     common_name: species.common_name ?? null,
-    kingdom,
+    kingdom: species.kingdom,
     total_population:
       species.total_population !== null && species.total_population !== undefined
         ? Number(species.total_population)
@@ -74,7 +74,7 @@ function getDefaultValues(species): Partial<FormData> {
   };
 }
 
-export default function EditSpeciesDialog({ species, userId }: { species: Species, userId: string }) {
+export default function EditSpeciesDialog({ species, userId }: { species: SpeciesRecord; userId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState<boolean>(false);
 
@@ -84,15 +84,10 @@ export default function EditSpeciesDialog({ species, userId }: { species: Specie
     mode: "onChange",
   });
 
-  // console.log(species.author);
-  // console.log(userId);
   if (species.author !== userId) {
-    // return <div>You are not authorized to edit this species.</div>;
     return;
   }
-  // console.log(species.author);
 
-  // Reset form when dialog opens so it shows current species data
   const handleOpenChange = (next: boolean) => {
     if (next) form.reset(getDefaultValues(species));
     setOpen(next);
@@ -132,10 +127,13 @@ export default function EditSpeciesDialog({ species, userId }: { species: Specie
 
   const onDelete = async () => {
     const supabase = createBrowserSupabaseClient();
-    const { error } = await supabase
+    const { error: _error } = await supabase
       .from("species")
       .delete()
       .eq("id", species.id);
+
+    if (_error)
+      return;
 
     setOpen(false);
     router.refresh();
@@ -150,7 +148,6 @@ export default function EditSpeciesDialog({ species, userId }: { species: Specie
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button variant="ghost" className="min-w-0 flex-1">Edit</Button>
-
       </DialogTrigger>
       <DialogContent className="max-h-screen overflow-y-auto sm:max-w-[600px]">
         <DialogHeader>
@@ -279,7 +276,7 @@ export default function EditSpeciesDialog({ species, userId }: { species: Specie
                 <Button type="submit" className="ml-1 mr-1 flex-auto">
                   Save
                 </Button>
-                <Button type="button" variant="destructive" className="ml-1 mr-1 flex-auto" onClick={onDelete}>
+                <Button type="button" variant="destructive" className="ml-1 mr-1 flex-auto" onClick={() => void onDelete()}>
                   Delete
                 </Button>
                 <DialogClose asChild>

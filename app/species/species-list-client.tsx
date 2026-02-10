@@ -6,10 +6,13 @@ import SpeciesCard from "./species-card";
 
 interface Species {
   id: number;
+  author: string;
   scientific_name: string;
   common_name: string | null;
   description: string | null;
-  [key: string]: any;
+  kingdom: "Animalia" | "Plantae" | "Fungi" | "Protista" | "Archaea" | "Bacteria";
+  total_population: number | null;
+  image: string | null;
 }
 
 export default function SpeciesListClient({ species, userId }: { species: Species[]; userId: string }) {
@@ -19,8 +22,8 @@ export default function SpeciesListClient({ species, userId }: { species: Specie
     if (!query.trim()) return true;
     const lower = query.toLowerCase();
     return (
-      s.scientific_name?.toLowerCase().includes(lower) ||
-      s.common_name?.toLowerCase().includes(lower) ||
+      s.scientific_name?.toLowerCase().includes(lower) ??
+      s.common_name?.toLowerCase().includes(lower) ??
       s.description?.toLowerCase().includes(lower)
     );
   });

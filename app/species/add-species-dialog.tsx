@@ -59,20 +59,25 @@ const defaultValues: Partial<FormData> = {
   description: null,
 };
 
-// Guess kingdom 
-function guessKingdom(text) {
+interface WikiPage {
+  extract?: string;
+  original?: { source?: string };
+}
+
+// Guess kingdom
+function guessKingdom(text: string) {
   const lower = text.toLowerCase();
-  if (lower.includes("animal") || lower.includes("mammal") || lower.includes("bird") || lower.includes("reptile") || lower.includes("fish") || lower.includes("insect") || lower.includes("amphibian")) 
+  if (lower.includes("animal") || lower.includes("mammal") || lower.includes("bird") || lower.includes("reptile") || lower.includes("fish") || lower.includes("insect") || lower.includes("amphibian"))
     return "Animalia";
-  if (lower.includes("plant") || lower.includes("flowering") || lower.includes("tree") || lower.includes("shrub")) 
+  if (lower.includes("plant") || lower.includes("flowering") || lower.includes("tree") || lower.includes("shrub"))
     return "Plantae";
-  if (lower.includes("fungus") || lower.includes("fungi") || lower.includes("mushroom")) 
+  if (lower.includes("fungus") || lower.includes("fungi") || lower.includes("mushroom"))
     return "Fungi";
-  if (lower.includes("protist") || lower.includes("algae") || lower.includes("protozoa")) 
+  if (lower.includes("protist") || lower.includes("algae") || lower.includes("protozoa"))
     return "Protista";
-  if (lower.includes("archaea")) 
+  if (lower.includes("archaea"))
     return "Archaea";
-  if (lower.includes("bacterium") || lower.includes("bacteria")) 
+  if (lower.includes("bacterium") || lower.includes("bacteria"))
     return "Bacteria";
   return "???";
 }
@@ -89,13 +94,13 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
   });
 
   const fetchFromWikipedia = async () => {
-    if (wikiQuery == "") return; // ignore empty strings
+    if (wikiQuery == "") return;
 
     const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(wikiQuery)}&srlimit=1&format=json&origin=*`;
     const searchRes = await fetch(searchUrl);
-    const searchData = await searchRes.json();
+    const searchData = (await searchRes.json()) as { query?: { search?: { title: string }[] } };
 
-    const topResult = searchData?.query?.search?.[0]; // does the result exist
+    const topResult = searchData?.query?.search?.[0];
 
     if (!topResult) {
       toast({ title: "No results found", description: "Try again!", variant: "destructive" });
@@ -104,13 +109,12 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
 
     const title = topResult.title;
 
-    // fetch stuff on the page
     const detailUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=extracts|pageimages&exintro&explaintext&piprop=original&format=json&origin=*`;
     const detailRes = await fetch(detailUrl);
-    const detailData = await detailRes.json();
+    const detailData = (await detailRes.json()) as { query?: { pages?: Record<string, WikiPage> } };
 
     const pages = detailData?.query?.pages;
-    const page = pages ? Object.values(pages)[0] as Record<string, any> : null;
+    const page: WikiPage | null = pages ? (Object.values(pages)[0] ?? null) : null;
 
     if (!page) {
       toast({ title: "Could not fetch details", variant: "destructive" });
@@ -121,9 +125,8 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
     const imageUrl: string | null = page.original?.source ?? null;
 
     const firstSentence = extract.split(".")[0] ?? "";
-    // regex to find if it is the name (usually in the format "(t4sg t4sg)")
     const scientificMatch = firstSentence.match(/\(([A-Z][a-z]+ [a-z]+)\)/);
-    const scientificName = scientificMatch ? scientificMatch[1] : title;
+    const scientificName = scientificMatch?.[1] ?? title ?? "";
 
     const kingdom = guessKingdom(extract);
 
@@ -132,7 +135,6 @@ export default function AddSpeciesDialog({ userId }: { userId: string }) {
       return;
     }
 
-    // fill form
     form.setValue("scientific_name", scientificName, { shouldValidate: true });
     form.setValue("common_name", title, { shouldValidate: true });
     form.setValue("kingdom", kingdom, { shouldValidate: true });
